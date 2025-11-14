@@ -1,0 +1,233 @@
+import { createClientFromRequest } from 'npm:@base44/sdk@0.7.1';
+
+Deno.serve(async (req) => {
+  try {
+    const base44 = createClientFromRequest(req);
+    
+    // Verificar autenticación
+    const user = await base44.auth.me();
+    if (!user || (user.role !== 'admin' && user.role !== 'superadmin')) {
+      return Response.json({ error: 'No autorizado' }, { status: 401 });
+    }
+
+    const { type, context } = await req.json();
+
+    // Obtener configuración del DJ
+    const configs = await base44.asServiceRole.entities.DJConfig.list();
+    const djConfig = configs[0] || {
+      dj_name: 'DJ Spirit',
+      dj_personality: 'Un DJ pentecostal entusiasta y lleno del Espíritu Santo',
+      language: 'es'
+    };
+
+    if (!djConfig.enabled) {
+      return Response.json({ 
+        error: 'DJ virtual no está habilitado' 
+      }, { status: 400 });
+    }
+
+    // Obtener now playing para contexto
+    let nowPlayingInfo = '';
+    try {
+      const npResponse = await base44.functions.invoke('getNowPlaying');
+      if (npResponse.data?.success && npResponse.data?.data) {
+        const np = npResponse.data.data;
+        nowPlayingInfo = `Canción actual: "${np.song_title}" de ${np.artist}`;
+      }
+    } catch (error) {
+      console.log('No se pudo obtener now playing:', error.message);
+    }
+
+    // Obtener hora del día para personalizar
+    const hour = new Date().getHours();
+    let timeOfDay = 'día';
+    let greeting = 'Hola';
+    
+    if (hour < 12) {
+      timeOfDay = 'mañana';
+      greeting = 'Buenos días';
+    } else if (hour < 19) {
+      timeOfDay = 'tarde';
+      greeting = 'Buenas tardes';
+    } else {
+      timeOfDay = 'noche';
+      greeting = 'Buenas noches';
+    }
+
+    // Construir el prompt según el tipo de intervención
+    let prompt = '';
+    
+    switch (type) {
+      case 'song_intro':
+        prompt = `Eres ${djConfig.dj_name}, un DJ de radio cristiana pentecostal carismático y lleno del Espíritu Santo.
+
+${nowPlayingInfo ? `Acabas de poner: ${nowPlayingInfo}` : ''}
+
+Tu trabajo es:
+1. Introducir la canción de manera breve (15-25 segundos máximo)
+2. Mencionar algo interesante sobre el artista o la canción
+3. Conectarlo con un mensaje de fe o esperanza
+4. Ser natural, entusiasta y pentecostal
+
+IMPORTANTE:
+- Habla en español latino natural
+- Sé breve y directo (máximo 3 oraciones)
+- NO uses emojis ni caracteres especiales
+- NO digas "amén" al final de cada frase
+- Mantén un tono conversacional y energético
+- Es ${timeOfDay}, ajusta tu energía
+
+Genera SOLO el texto que dirás, sin acotaciones ni instrucciones.`;
+        break;
+
+      case 'greeting':
+        prompt = `Eres ${djConfig.dj_name}, DJ de SELAIAH RADIO, radio cristiana pentecostal.
+
+Es la ${timeOfDay} (${hour}:00 hrs aprox).
+
+Crea un saludo breve y energético que:
+1. Salude a los oyentes (15-20 segundos)
+2. Mencione el nombre de la radio "SELAIAH RADIO - Donde el cielo toca la tierra"
+3. Inspire con un mensaje pentecostal breve
+4. Sea natural y entusiasta
+
+REGLAS:
+- Habla en español latino conversacional
+- Máximo 3 oraciones cortas
+- NO uses emojis
+- NO termines con "amén" en cada frase
+- Sé auténtico y lleno del Espíritu
+
+Genera SOLO el texto del saludo:`;
+        break;
+
+      case 'blessing':
+        prompt = `Eres ${djConfig.dj_name}, DJ pentecostal de SELAIAH RADIO.
+
+Crea una bendición breve (15-20 segundos) que:
+1. Sea específica y personal
+2. Invoque el poder del Espíritu Santo
+3. Hable de provisión, sanidad o protección
+4. Sea pentecostal pero no religiosa en exceso
+
+ESTILO:
+- Natural y conversacional en español
+- 2-3 oraciones máximo
+- NO uses lenguaje arcaico ("vosotros", "vuestra")
+- SÍ usa lenguaje pentecostal moderno
+- Sin emojis
+
+Genera SOLO la bendición:`;
+        break;
+
+      case 'scripture':
+        prompt = `Eres ${djConfig.dj_name}, DJ de SELAIAH RADIO.
+
+Comparte un versículo bíblico breve (20-30 segundos):
+1. Elige un versículo pentecostal poderoso (Hechos, 1 Corintios 12-14, Joel, etc)
+2. Da la referencia bíblica
+3. Lee el versículo
+4. Haz UN comentario breve de aplicación práctica
+
+FORMATO EXACTO:
+"La Biblia dice en [Libro Capítulo:Versículo]: '[texto del versículo]'. [Un comentario breve]"
+
+REGLAS:
+- Versión Reina-Valera 1960
+- Español natural
+- NO emojis
+- Breve y poderoso
+
+Genera:`;
+        break;
+
+      case 'weather':
+        prompt = `Eres ${djConfig.dj_name}, DJ de SELAIAH RADIO.
+
+${nowPlayingInfo ? `Sonó: ${nowPlayingInfo}` : ''}
+
+Haz una transición natural y breve (10-15 segundos) mencionando:
+1. El clima espiritual / ambiente de alabanza
+2. Conecta con la siguiente canción o momento
+3. Mantén la energía alta
+
+IMPORTANTE:
+- NO hables del clima literal (temperatura, lluvia, etc)
+- Habla del "clima espiritual" o "atmósfera de adoración"
+- 2 oraciones máximo
+- Español natural
+- Sin emojis
+
+Genera:`;
+        break;
+
+      case 'announcement':
+        prompt = `Eres ${djConfig.dj_name}, DJ de SELAIAH RADIO.
+
+${context?.announcement || 'Hay un anuncio importante.'}
+
+Presenta este anuncio de manera:
+1. Clara y directa (15-20 segundos)
+2. Entusiasta si es un evento
+3. Pastoral si es una oración/necesidad
+4. Natural y cercana
+
+ESTILO:
+- Conversacional en español
+- 2-3 oraciones
+- Sin emojis
+- Profesional pero cálido
+
+Genera:`;
+        break;
+
+      default:
+        prompt = `Eres ${djConfig.dj_name}, DJ pentecostal de SELAIAH RADIO.
+
+${nowPlayingInfo}
+
+Crea una intervención breve (15-20 segundos) que sea:
+- Natural y conversacional
+- Llena del Espíritu Santo
+- Relevante al momento
+- 2-3 oraciones máximo
+
+En español, sin emojis. Genera:`;
+    }
+
+    // Llamar a OpenAI
+    const result = await base44.integrations.Core.InvokeLLM({
+      prompt: prompt,
+      add_context_from_internet: false
+    });
+
+    // Limpiar el texto generado
+    let script = typeof result === 'string' ? result : result.response || result.text || '';
+    script = script.trim();
+    
+    // Remover comillas si el texto está entre comillas
+    if (script.startsWith('"') && script.endsWith('"')) {
+      script = script.slice(1, -1);
+    }
+
+    console.log('✅ Script generado:', script);
+
+    return Response.json({
+      success: true,
+      script: script,
+      context: {
+        type,
+        dj_name: djConfig.dj_name,
+        time_of_day: timeOfDay,
+        now_playing: nowPlayingInfo
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error generando script:', error);
+    return Response.json({ 
+      error: error.message,
+      stack: error.stack
+    }, { status: 500 });
+  }
+});

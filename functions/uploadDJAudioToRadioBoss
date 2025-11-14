@@ -1,0 +1,95 @@
+import { createClientFromRequest } from 'npm:@base44/sdk@0.7.1';
+import { FTPClient } from 'jsr:@cross/ftp@0.0.1';
+
+Deno.serve(async (req) => {
+  try {
+    const base44 = createClientFromRequest(req);
+    
+    // Verificar autenticación
+    const user = await base44.auth.me();
+    if (!user || (user.role !== 'admin' && user.role !== 'superadmin')) {
+      return Response.json({ error: 'No autorizado' }, { status: 401 });
+    }
+
+    const { audio_base64, filename } = await req.json();
+
+    if (!audio_base64 || !filename) {
+      return Response.json({ 
+        error: 'audio_base64 y filename son requeridos' 
+      }, { status: 400 });
+    }
+
+    // Configuración de RadioBOSS Cloud FTP
+    const ftpHost = 'c34.radioboss.fm';
+    const ftpPort = 21;
+    const ftpUser = 'selaiah';
+    const ftpPassword = Deno.env.get('RADIOBOSS_FTP_PASSWORD');
+
+    if (!ftpPassword) {
+      return Response.json({ 
+        error: 'RADIOBOSS_FTP_PASSWORD no configurada' 
+      }, { status: 500 });
+    }
+
+    console.log('📡 Conectando a RadioBOSS Cloud FTP...');
+    console.log('🌐 Host:', ftpHost);
+    console.log('👤 User:', ftpUser);
+    console.log('📁 Archivo:', filename);
+
+    // Convertir base64 a Uint8Array
+    const binaryString = atob(audio_base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    // Conectar vía FTP
+    const ftp = new FTPClient({
+      host: ftpHost,
+      port: ftpPort,
+      user: ftpUser,
+      password: ftpPassword,
+      secure: 'explicit' // Explicit TLS
+    });
+
+    await ftp.connect();
+    console.log('✅ Conectado a FTP');
+
+    // Crear directorio si no existe
+    const djFolder = '/dj_interventions';
+    try {
+      await ftp.mkdir(djFolder);
+      console.log('📁 Directorio creado:', djFolder);
+    } catch (error) {
+      // Directorio ya existe, continuar
+      console.log('📁 Directorio ya existe:', djFolder);
+    }
+
+    // Subir archivo
+    const remotePath = `${djFolder}/${filename}`;
+    await ftp.put(bytes, remotePath);
+    console.log('✅ Archivo subido:', remotePath);
+
+    await ftp.close();
+    console.log('🔌 Conexión FTP cerrada');
+
+    // URL pública del archivo (si RadioBOSS lo sirve públicamente)
+    const publicUrl = `https://c34.radioboss.fm/dj_interventions/${filename}`;
+
+    return Response.json({
+      success: true,
+      remote_path: remotePath,
+      public_url: publicUrl,
+      filename: filename,
+      size_bytes: bytes.length
+    });
+
+  } catch (error) {
+    console.error('❌ Error subiendo a RadioBOSS:', error);
+    return Response.json({ 
+      error: error.message,
+      stack: error.stack,
+      details: 'Error al subir archivo vía FTP a RadioBOSS Cloud'
+    }, { status: 500 });
+  }
+});

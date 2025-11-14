@@ -1,0 +1,99 @@
+import { createClientFromRequest } from 'npm:@base44/sdk@0.7.1';
+
+Deno.serve(async (req) => {
+  try {
+    const base44 = createClientFromRequest(req);
+    
+    // Verificar autenticación
+    const user = await base44.auth.me();
+    if (!user || (user.role !== 'admin' && user.role !== 'superadmin')) {
+      return Response.json({ error: 'No autorizado' }, { status: 401 });
+    }
+
+    const { script, voice_id, voice_settings } = await req.json();
+
+    if (!script) {
+      return Response.json({ error: 'Script es requerido' }, { status: 400 });
+    }
+
+    // Obtener API key de ElevenLabs
+    const elevenLabsApiKey = Deno.env.get('ELEVENLABS_API_KEY');
+    if (!elevenLabsApiKey) {
+      return Response.json({ 
+        error: 'ELEVENLABS_API_KEY no configurada' 
+      }, { status: 500 });
+    }
+
+    // Obtener configuración del DJ o usar defaults
+    const configs = await base44.asServiceRole.entities.DJConfig.list();
+    const djConfig = configs[0] || {};
+    
+    const finalVoiceId = voice_id || djConfig.voice_id || 'EXAVITQu4vr4xnSDxMaL'; // Voice por defecto de ElevenLabs (Spanish male)
+    const finalVoiceSettings = voice_settings || djConfig.voice_settings || {
+      stability: 0.5,
+      similarity_boost: 0.75,
+      style: 0.5,
+      use_speaker_boost: true
+    };
+
+    console.log('🎙️ Generando audio con ElevenLabs...');
+    console.log('📝 Script:', script.substring(0, 100) + '...');
+    console.log('🗣️ Voice ID:', finalVoiceId);
+
+    // Llamar a ElevenLabs API
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${finalVoiceId}`,
+      {
+        method: 'POST',
+        headers: {
+          'Accept': 'audio/mpeg',
+          'Content-Type': 'application/json',
+          'xi-api-key': elevenLabsApiKey
+        },
+        body: JSON.stringify({
+          text: script,
+          model_id: 'eleven_multilingual_v2', // Mejor modelo para español
+          voice_settings: {
+            stability: finalVoiceSettings.stability,
+            similarity_boost: finalVoiceSettings.similarity_boost,
+            style: finalVoiceSettings.style || 0,
+            use_speaker_boost: finalVoiceSettings.use_speaker_boost
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Error de ElevenLabs:', errorText);
+      throw new Error(`ElevenLabs API error: ${response.status} - ${errorText}`);
+    }
+
+    // Obtener el audio como array buffer
+    const audioBuffer = await response.arrayBuffer();
+    const audioBase64 = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
+
+    console.log('✅ Audio generado exitosamente');
+    console.log('📦 Tamaño:', Math.round(audioBuffer.byteLength / 1024), 'KB');
+
+    // Estimar duración (aproximadamente)
+    // MP3 a 128kbps: ~16KB por segundo
+    const estimatedDuration = Math.round(audioBuffer.byteLength / 16000);
+
+    return Response.json({
+      success: true,
+      audio_base64: audioBase64,
+      content_type: 'audio/mpeg',
+      size_bytes: audioBuffer.byteLength,
+      estimated_duration_seconds: estimatedDuration,
+      voice_id: finalVoiceId
+    });
+
+  } catch (error) {
+    console.error('❌ Error generando audio:', error);
+    return Response.json({ 
+      error: error.message,
+      stack: error.stack
+    }, { status: 500 });
+  }
+});

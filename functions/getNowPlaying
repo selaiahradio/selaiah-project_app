@@ -1,0 +1,391 @@
+import { createClientFromRequest } from 'npm:@base44/sdk@0.7.1';
+
+// Función mejorada para RadioBOSS Cloud con API Key
+async function getRadioBossMetadata(streamConfig) {
+  try {
+    // El Station ID correcto es 888 (basado en la configuración)
+    const stationId = '888';
+    
+    console.log('🎵 Obteniendo metadata de RadioBOSS Cloud - Station ID:', stationId);
+    
+    // URL del artwork (siempre disponible)
+    const artworkUrl = `https://c34.radioboss.fm/w/artwork/${stationId}.jpg`;
+    
+    // Intentar obtener información usando el script de now playing
+    try {
+      const nowPlayingUrl = `https://c34.radioboss.fm/w/nowplaying2.js?u=${stationId}&wid=api&tf=1&t=${Date.now()}`;
+      console.log('📡 Consultando:', nowPlayingUrl);
+      
+      const response = await fetch(nowPlayingUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; SELAIAH-RADIO/1.0)',
+          'Accept': '*/*'
+        }
+      });
+      
+      if (response.ok) {
+        const scriptText = await response.text();
+        console.log('📝 Script recibido (primeros 300 chars):', scriptText.substring(0, 300));
+        
+        // RadioBOSS usa formato: document.getElementById('rbcloud_np_aXXX').innerHTML = 'Artist';
+        // Buscar el artist y title en el script
+        const artistMatch = scriptText.match(/getElementById\s*\(\s*['"]rbcloud_np_a[^'"]*['"]\s*\)\s*\.innerHTML\s*=\s*['"]([^'"]+)['"]/i);
+        const titleMatch = scriptText.match(/getElementById\s*\(\s*['"]rbcloud_np_t[^'"]*['"]\s*\)\s*\.innerHTML\s*=\s*['"]([^'"]+)['"]/i);
+        
+        let artist = 'SELAIAH RADIO';
+        let title = 'Música Cristiana';
+        
+        if (artistMatch && artistMatch[1]) {
+          artist = artistMatch[1].trim();
+          console.log('✅ Artist encontrado:', artist);
+        }
+        
+        if (titleMatch && titleMatch[1]) {
+          title = titleMatch[1].trim();
+          console.log('✅ Title encontrado:', title);
+          
+          // Si el título contiene " - " y no hay artist, separarlo
+          if (title.includes(' - ') && (!artistMatch || !artistMatch[1])) {
+            const parts = title.split(' - ');
+            if (parts.length >= 2) {
+              artist = parts[0].trim();
+              title = parts.slice(1).join(' - ').trim();
+              console.log('🔄 Formato "Artist - Title" detectado');
+              console.log('   Artist:', artist);
+              console.log('   Title:', title);
+            }
+          }
+        }
+        
+        // Verificar que tengamos datos válidos
+        if (artist && title && artist !== 'SELAIAH RADIO' && title !== 'Música Cristiana') {
+          console.log('✅ Metadata válida obtenida');
+          return {
+            song_title: title,
+            artist: artist,
+            album: null,
+            cover_art_url: artworkUrl,
+            listeners: 0,
+            stream_id: streamConfig.id,
+            source: 'radioboss_script'
+          };
+        } else {
+          console.log('⚠️ Metadata no válida o vacía');
+        }
+      } else {
+        console.log('⚠️ Error HTTP:', response.status, response.statusText);
+      }
+    } catch (error) {
+      console.log('⚠️ Error obteniendo script:', error.message);
+    }
+    
+    // Fallback: Intentar con la página de estadísticas
+    try {
+      const statsUrl = `https://c34.radioboss.fm:8888/status-json.xsl`;
+      console.log('📊 Intentando stats:', statsUrl);
+      
+      const statsResponse = await fetch(statsUrl);
+      if (statsResponse.ok) {
+        const stats = await statsResponse.json();
+        console.log('📊 Stats recibidas:', JSON.stringify(stats).substring(0, 200));
+        
+        if (stats.icestats && stats.icestats.source) {
+          const source = Array.isArray(stats.icestats.source) 
+            ? stats.icestats.source[0] 
+            : stats.icestats.source;
+          
+          if (source.title) {
+            let fullTitle = source.title;
+            let artist = 'SELAIAH RADIO';
+            let title = fullTitle;
+            
+            if (fullTitle.includes(' - ')) {
+              const parts = fullTitle.split(' - ');
+              artist = parts[0].trim();
+              title = parts.slice(1).join(' - ').trim();
+            }
+            
+            console.log('✅ Metadata de stats - Artist:', artist, 'Title:', title);
+            
+            return {
+              song_title: title,
+              artist: artist,
+              album: null,
+              cover_art_url: artworkUrl,
+              listeners: source.listeners || 0,
+              stream_id: streamConfig.id,
+              source: 'radioboss_stats'
+            };
+          }
+        }
+      }
+    } catch (statsError) {
+      console.log('⚠️ Error stats:', statsError.message);
+    }
+    
+    // Último fallback: solo artwork
+    console.log('ℹ️ Usando fallback con artwork solamente');
+    return {
+      song_title: 'En Vivo',
+      artist: 'SELAIAH RADIO',
+      album: null,
+      cover_art_url: artworkUrl,
+      listeners: 0,
+      stream_id: streamConfig.id,
+      source: 'radioboss_artwork_only'
+    };
+    
+  } catch (error) {
+    console.error('❌ Error general en RadioBOSS:', error);
+    return null;
+  }
+}
+
+// Detectar tipo de servidor
+function detectServerType(url) {
+  if (!url) return 'unknown';
+  const urlLower = url.toLowerCase();
+  
+  if (urlLower.includes('radioboss.fm') || urlLower.includes('c34.radioboss')) {
+    return 'radioboss';
+  }
+  if (urlLower.includes('azuracast')) {
+    return 'azuracast';
+  }
+  if (urlLower.includes(':8000') || urlLower.includes('icecast')) {
+    return 'icecast';
+  }
+  if (urlLower.includes(':8080') || urlLower.includes('shoutcast')) {
+    return 'shoutcast';
+  }
+  
+  return 'generic';
+}
+
+// AzuraCast
+async function getAzuracastMetadata(streamConfig) {
+  if (!streamConfig.azuracast_api_url || !streamConfig.azuracast_station_id) {
+    return null;
+  }
+  
+  try {
+    const url = `${streamConfig.azuracast_api_url}/station/${streamConfig.azuracast_station_id}/nowplaying`;
+    console.log('🎵 Obteniendo metadata de AzuraCast:', url);
+    
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('AzuraCast API error');
+    
+    const data = await response.json();
+    
+    return {
+      song_title: data.now_playing?.song?.title || 'Radio',
+      artist: data.now_playing?.song?.artist || 'Música',
+      album: data.now_playing?.song?.album || null,
+      cover_art_url: data.now_playing?.song?.art || null,
+      started_at: data.now_playing?.played_at ? new Date(data.now_playing.played_at * 1000).toISOString() : null,
+      duration: data.now_playing?.duration || null,
+      listeners: data.listeners?.current || 0,
+      stream_id: streamConfig.id,
+      source: 'azuracast'
+    };
+  } catch (error) {
+    console.error('❌ Error en AzuraCast:', error);
+    return null;
+  }
+}
+
+// Icecast
+async function getIcecastMetadata(streamConfig) {
+  try {
+    const baseUrl = new URL(streamConfig.stream_url);
+    const statusUrl = `${baseUrl.protocol}//${baseUrl.host}/status-json.xsl`;
+    
+    console.log('🎵 Obteniendo metadata de Icecast:', statusUrl);
+    
+    const response = await fetch(statusUrl);
+    if (!response.ok) throw new Error('Icecast not available');
+    
+    const data = await response.json();
+    const sources = data.icestats?.source || [];
+    const source = Array.isArray(sources) ? sources[0] : sources;
+    
+    if (source) {
+      const title = source.title || source.server_name || '';
+      let artist = 'Radio';
+      let songTitle = title;
+      
+      if (title.includes(' - ')) {
+        const parts = title.split(' - ');
+        artist = parts[0].trim();
+        songTitle = parts.slice(1).join(' - ').trim();
+      }
+      
+      return {
+        song_title: songTitle,
+        artist: artist,
+        album: null,
+        cover_art_url: null,
+        listeners: source.listeners || 0,
+        stream_id: streamConfig.id,
+        source: 'icecast'
+      };
+    }
+  } catch (error) {
+    console.error('❌ Error en Icecast:', error);
+    return null;
+  }
+  
+  return null;
+}
+
+// Shoutcast
+async function getShoutcastMetadata(streamConfig) {
+  try {
+    const baseUrl = new URL(streamConfig.stream_url);
+    const statsUrl = `${baseUrl.protocol}//${baseUrl.host}/stats?json=1`;
+    
+    console.log('🎵 Obteniendo metadata de Shoutcast:', statsUrl);
+    
+    const response = await fetch(statsUrl);
+    if (!response.ok) throw new Error('Shoutcast not available');
+    
+    const data = await response.json();
+    
+    const title = data.songtitle || data.servertitle || '';
+    let artist = 'Radio';
+    let songTitle = title;
+    
+    if (title.includes(' - ')) {
+      const parts = title.split(' - ');
+      artist = parts[0].trim();
+      songTitle = parts.slice(1).join(' - ').trim();
+    }
+    
+    return {
+      song_title: songTitle,
+      artist: artist,
+      album: null,
+      cover_art_url: null,
+      listeners: data.currentlisteners || 0,
+      stream_id: streamConfig.id,
+      source: 'shoutcast'
+    };
+  } catch (error) {
+    console.error('❌ Error en Shoutcast:', error);
+    return null;
+  }
+  
+  return null;
+}
+
+Deno.serve(async (req) => {
+  try {
+    const base44 = createClientFromRequest(req);
+
+    // Obtener configuración del stream activo
+    const configs = await base44.asServiceRole.entities.StreamConfig.filter({ 
+      is_active: true, 
+      is_primary: true 
+    });
+
+    if (!configs || configs.length === 0) {
+      return Response.json({ 
+        error: 'No hay stream configurado' 
+      }, { status: 404 });
+    }
+
+    const streamConfig = configs[0];
+    
+    console.log('🎵 Stream configurado:', streamConfig.name);
+    console.log('🌐 URL:', streamConfig.stream_url);
+    
+    // Detectar tipo de servidor
+    const serverType = streamConfig.metadata?.server_type || detectServerType(streamConfig.stream_url);
+    console.log('🔍 Tipo detectado:', serverType);
+    
+    let nowPlaying = null;
+    
+    // Intentar obtener metadatos según el tipo
+    switch (serverType) {
+      case 'radioboss':
+        nowPlaying = await getRadioBossMetadata(streamConfig);
+        break;
+        
+      case 'azuracast':
+        nowPlaying = await getAzuracastMetadata(streamConfig);
+        break;
+        
+      case 'icecast':
+        nowPlaying = await getIcecastMetadata(streamConfig);
+        break;
+        
+      case 'shoutcast':
+        nowPlaying = await getShoutcastMetadata(streamConfig);
+        break;
+        
+      default:
+        // Intentar todos los métodos
+        nowPlaying = await getRadioBossMetadata(streamConfig) ||
+                     await getAzuracastMetadata(streamConfig) ||
+                     await getIcecastMetadata(streamConfig) ||
+                     await getShoutcastMetadata(streamConfig);
+        break;
+    }
+    
+    // Si obtuvimos datos, guardar en BD
+    if (nowPlaying) {
+      try {
+        await base44.asServiceRole.entities.NowPlaying.create(nowPlaying);
+        console.log('✅ Datos guardados en BD');
+      } catch (dbError) {
+        console.error('⚠️ Error guardando en BD:', dbError.message);
+      }
+      
+      return Response.json({
+        success: true,
+        data: nowPlaying
+      });
+    }
+    
+    // Fallback a BD
+    console.log('📦 Buscando en BD...');
+    const recentPlaying = await base44.asServiceRole.entities.NowPlaying.filter(
+      { stream_id: streamConfig.id },
+      "-created_date",
+      1
+    );
+
+    if (recentPlaying && recentPlaying.length > 0) {
+      console.log('✅ Datos encontrados en BD');
+      return Response.json({
+        success: true,
+        data: recentPlaying[0],
+        source: 'cached'
+      });
+    }
+
+    // Último fallback
+    console.log('⚠️ Usando datos por defecto');
+    return Response.json({
+      success: true,
+      data: {
+        song_title: 'En Vivo',
+        artist: 'SELAIAH RADIO',
+        album: 'Música Cristiana 24/7',
+        cover_art_url: 'https://c34.radioboss.fm/w/artwork/888.jpg',
+        started_at: new Date().toISOString(),
+        duration: null,
+        listeners: 0,
+        stream_id: streamConfig.id,
+        source: 'default'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error general:', error);
+    return Response.json({ 
+      error: error.message,
+      stack: error.stack
+    }, { status: 500 });
+  }
+});

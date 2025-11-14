@@ -1,0 +1,183 @@
+import { createClientFromRequest } from 'npm:@base44/sdk@0.7.1';
+import admin from 'npm:firebase-admin@12.0.0';
+
+// Inicializar Firebase Admin
+let firebaseApp;
+
+function initializeFirebaseAdmin() {
+  if (firebaseApp) return firebaseApp;
+
+  try {
+    const serviceAccountJson = Deno.env.get('FIREBASE_SERVICE_ACCOUNT_JSON');
+    
+    if (!serviceAccountJson) {
+      throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON no configurado');
+    }
+
+    const serviceAccount = JSON.parse(serviceAccountJson);
+
+    firebaseApp = admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+
+    console.log('Firebase Admin SDK inicializado correctamente');
+    return firebaseApp;
+  } catch (error) {
+    console.error('Error inicializando Firebase Admin:', error);
+    throw error;
+  }
+}
+
+Deno.serve(async (req) => {
+  try {
+    const base44 = createClientFromRequest(req);
+    const user = await base44.auth.me();
+
+    if (!user) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { notificationId, immediate } = await req.json();
+
+    if (!notificationId) {
+      return Response.json({ error: 'notificationId requerido' }, { status: 400 });
+    }
+
+    // Inicializar Firebase Admin
+    initializeFirebaseAdmin();
+
+    // Obtener la notificación
+    const notification = await base44.asServiceRole.entities.PushNotification.filter({ id: notificationId });
+    
+    if (!notification || notification.length === 0) {
+      return Response.json({ error: 'Notificación no encontrada' }, { status: 404 });
+    }
+
+    const notif = notification[0];
+
+    // Verificar si debe enviarse ahora o está programada
+    if (!immediate && notif.scheduled_for) {
+      const scheduledDate = new Date(notif.scheduled_for);
+      if (scheduledDate > new Date()) {
+        return Response.json({ 
+          message: 'Notificación programada',
+          scheduled_for: notif.scheduled_for 
+        });
+      }
+    }
+
+    // Obtener suscripciones según el target
+    let subscriptions = [];
+    
+    if (notif.target_users && notif.target_users.length > 0) {
+      // Enviar a usuarios específicos
+      for (const email of notif.target_users) {
+        const userSubs = await base44.asServiceRole.entities.PushSubscription.filter({
+          user_email: email,
+          is_active: true
+        });
+        subscriptions.push(...userSubs);
+      }
+    } else {
+      // Broadcast a todos los suscritos al tópico
+      const allSubs = await base44.asServiceRole.entities.PushSubscription.filter({
+        is_active: true
+      });
+      
+      subscriptions = allSubs.filter(sub => 
+        sub.topics && (sub.topics.includes('all') || sub.topics.includes(notif.topic))
+      );
+    }
+
+    if (subscriptions.length === 0) {
+      return Response.json({ 
+        message: 'No hay suscriptores para esta notificación',
+        sent: 0 
+      });
+    }
+
+    let sentCount = 0;
+    let failedCount = 0;
+
+    // Enviar notificaciones en lotes usando Firebase Admin SDK
+    const batchSize = 500; // Firebase permite hasta 500 por batch
+    
+    for (let i = 0; i < subscriptions.length; i += batchSize) {
+      const batch = subscriptions.slice(i, i + batchSize);
+      
+      const messages = batch.map(sub => ({
+        token: sub.device_token,
+        notification: {
+          title: notif.title,
+          body: notif.body,
+          imageUrl: notif.image_url || undefined,
+        },
+        data: {
+          click_action: notif.click_action || '/',
+          topic: notif.topic || 'all',
+          url: notif.click_action || '/'
+        },
+        webpush: notif.icon_url ? {
+          notification: {
+            icon: notif.icon_url
+          }
+        } : undefined
+      }));
+
+      try {
+        const response = await admin.messaging().sendEach(messages);
+        
+        // Procesar resultados
+        for (let j = 0; j < response.responses.length; j++) {
+          const result = response.responses[j];
+          const subscription = batch[j];
+          
+          if (result.success) {
+            sentCount++;
+            // Actualizar última vez usado
+            await base44.asServiceRole.entities.PushSubscription.update(subscription.id, {
+              last_used: new Date().toISOString()
+            });
+          } else {
+            failedCount++;
+            console.error(`Error enviando a ${subscription.device_token}:`, result.error);
+            
+            // Si el token es inválido, marcar suscripción como inactiva
+            if (result.error?.code === 'messaging/invalid-registration-token' ||
+                result.error?.code === 'messaging/registration-token-not-registered') {
+              await base44.asServiceRole.entities.PushSubscription.update(subscription.id, {
+                is_active: false
+              });
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error enviando batch:', error);
+        failedCount += batch.length;
+      }
+    }
+
+    // Actualizar estado de la notificación
+    await base44.asServiceRole.entities.PushNotification.update(notificationId, {
+      status: 'sent',
+      sent_at: new Date().toISOString(),
+      sent_count: sentCount,
+      failed_count: failedCount
+    });
+
+    return Response.json({
+      success: true,
+      message: 'Notificaciones enviadas usando Firebase Admin SDK',
+      sent: sentCount,
+      failed: failedCount,
+      total: subscriptions.length
+    });
+
+  } catch (error) {
+    console.error('Error en sendPushNotification:', error);
+    return Response.json({ 
+      error: error.message,
+      success: false 
+    }, { status: 500 });
+  }
+});

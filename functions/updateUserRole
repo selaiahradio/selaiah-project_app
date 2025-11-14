@@ -1,0 +1,85 @@
+import { createClientFromRequest } from 'npm:@base44/sdk@0.7.1';
+
+Deno.serve(async (req) => {
+  try {
+    const base44 = createClientFromRequest(req);
+    
+    // Verificar autenticación
+    const currentUser = await base44.auth.me();
+    if (!currentUser) {
+      return Response.json({ error: 'No autorizado' }, { status: 401 });
+    }
+
+    const { userId, updates } = await req.json();
+
+    if (!userId || !updates) {
+      return Response.json({ 
+        error: 'userId y updates son requeridos' 
+      }, { status: 400 });
+    }
+
+    console.log('🔄 Actualizando usuario:', userId, updates);
+
+    // Obtener todos los usuarios para verificar si hay superadmin
+    const allUsers = await base44.asServiceRole.entities.User.list();
+    const hasSuperAdmin = allUsers.some(u => u.role === 'superadmin');
+
+    console.log('👑 ¿Hay superadmin en el sistema?:', hasSuperAdmin);
+    console.log('👤 Usuario actual:', currentUser.email, 'Rol:', currentUser.role);
+
+    // REGLAS DE PERMISOS
+    if (updates.role === 'superadmin') {
+      // Si NO hay superadmin, permitir que cualquier admin cree el primero
+      if (!hasSuperAdmin) {
+        if (currentUser.role !== 'admin' && currentUser.role !== 'superadmin') {
+          return Response.json({ 
+            error: 'Solo administradores pueden crear el primer superadmin' 
+          }, { status: 403 });
+        }
+        console.log('✅ Permitido: Creando primer superadmin');
+      } else {
+        // Si YA hay superadmin, solo otro superadmin puede asignar
+        if (currentUser.role !== 'superadmin') {
+          return Response.json({ 
+            error: 'Solo un superadmin puede asignar el rol de superadmin' 
+          }, { status: 403 });
+        }
+        console.log('✅ Permitido: Superadmin asignando superadmin');
+      }
+    } else {
+      // Para otros cambios de roles
+      if (!hasSuperAdmin) {
+        // Si no hay superadmin, cualquier admin puede editar
+        if (currentUser.role !== 'admin' && currentUser.role !== 'superadmin') {
+          return Response.json({ 
+            error: 'Solo administradores pueden cambiar roles' 
+          }, { status: 403 });
+        }
+      } else {
+        // Si hay superadmin, solo el superadmin puede cambiar roles
+        if (currentUser.role !== 'superadmin') {
+          return Response.json({ 
+            error: 'Solo un superadmin puede cambiar roles de usuarios' 
+          }, { status: 403 });
+        }
+      }
+    }
+
+    // Ejecutar actualización con privilegios elevados
+    const updatedUser = await base44.asServiceRole.entities.User.update(userId, updates);
+
+    console.log('✅ Usuario actualizado exitosamente');
+
+    return Response.json({
+      success: true,
+      user: updatedUser
+    });
+
+  } catch (error) {
+    console.error('❌ Error en updateUserRole:', error);
+    return Response.json({ 
+      error: error.message,
+      stack: error.stack
+    }, { status: 500 });
+  }
+});
