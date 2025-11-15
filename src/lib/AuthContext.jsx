@@ -57,8 +57,6 @@ export const AuthProvider = ({ children }) => {
     const url = new URL(window.location);
     url.searchParams.delete('access_token');
     window.history.replaceState({}, document.title, url.pathname + url.search);
-    // Redirect to login page
-    window.location.href = '/login';
   };
 
   return (

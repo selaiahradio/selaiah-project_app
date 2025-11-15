@@ -11,7 +11,7 @@ export default function Login() {
   const handleGoogleSignIn = () => {
     // Redirect to the current page after login.
     // The backend will append the access token.
-    const redirectUrl = window.location.origin + window.location.pathname;
+    const redirectUrl = window.location.origin + '/';
     redirectToGoogleLogin(redirectUrl);
   };
 
@@ -22,7 +22,7 @@ export default function Login() {
     setFeedback("");
 
     try {
-      const redirectUrl = window.location.origin + window.location.pathname.replace('/login','/');
+      const redirectUrl = window.location.origin + '/';
       await sendMagicLink(email, redirectUrl);
       setFeedback("We've sent a magic link to your email. Please check your inbox!");
     } catch (err) {
