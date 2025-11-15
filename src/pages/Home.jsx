@@ -5,13 +5,11 @@ import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useAudio } from '@/components/player/AudioContext';
-import { Me } from '@/lib/AuthContext';
+import { useAuth } from '@/lib/AuthContext';
 import { useLanguage } from '@/components/LanguageContext';
 import { getPagePath } from '@/pages.config';
 
 import { Play, Pause, Heart, Share2, Radio, Music, Users, ArrowRight } from 'lucide-react';
-
-const LOGIN_URL = 'https://login.selaiah.com/';
 
 // Mock API calls for featured content
 const fetchFeaturedShows = async () => {
@@ -35,13 +33,9 @@ const fetchLatestPosts = async () => {
   ]);
 };
 
-function login() {
-  window.location.href = LOGIN_URL;
-}
-
 export default function Home() {
   const { t } = useLanguage();
-  const [currentUser, setCurrentUser] = useState(null);
+  const { user } = useAuth();
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const { isPlaying, volume, isMuted, isLoading, streamConfig, nowPlaying, togglePlay, toggleMute, handleVolumeChange } = useAudio();
 
@@ -58,10 +52,6 @@ export default function Home() {
     'Alabanza que transforma',
   ];
 
-
-  useEffect(() => {
-    Me().then(setCurrentUser).catch(() => setCurrentUser(null));
-  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -153,13 +143,13 @@ export default function Home() {
         </div>
         <div className="relative container mx-auto px-4 text-center z-10">
           <motion.h1 initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} transition={{duration: 0.8}} className="text-5xl md:text-7xl font-bold text-white mb-6">
-            {getGreeting()}{currentUser ? `, ${currentUser.full_name}` : ''}
+            {getGreeting()}{user ? `, ${user.full_name}` : ''}
           </motion.h1>
           <motion.p initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} transition={{duration: 0.8, delay: 0.1}} className="text-xl md:text-2xl text-blue-300 mb-8">{t.home.welcome}</motion.p>
-          {!currentUser && (
+          {!user && (
             <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} transition={{duration: 0.8, delay: 0.2}}>
-              <Button size="lg" onClick={login} className="bg-blue-600 hover:bg-blue-700 text-white text-lg px-8 py-6">
-                {t.home.joinCommunity}
+              <Button size="lg" asChild className="bg-blue-600 hover:bg-blue-700 text-white text-lg px-8 py-6">
+                <Link to={getPagePath("Login")}>{t.home.joinCommunity}</Link>
               </Button>
             </motion.div>
           )}
