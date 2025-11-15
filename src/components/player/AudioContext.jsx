@@ -1,8 +1,69 @@
 
 import React, { createContext, useContext, useState, useRef, useEffect } from 'react';
-import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { appParams } from "@/lib/app-params";
+
+const API_BASE_URL = "https://us-central1-selaiah-radio.cloudfunctions.net/api";
+const token = appParams.token;
+
+// --- START: New Data Fetching Functions ---
+const fetcher = async (path, options = {}) => {
+    const url = `${API_BASE_URL}${path}`;
+    const headers = { 'Content-Type': 'application/json', ...options.headers };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, { ...options, headers });
+    if (!response.ok) {
+        // For 204 No Content, we don't expect a JSON body, so we can return early.
+        if (response.status === 204) return null;
+        const errorText = await response.text();
+        console.error(`API Error on ${path}: ${errorText}`);
+        throw new Error(`Request failed: ${response.status}`);
+    }
+    return response.json();
+};
+
+const fetchStreamConfig = async () => {
+  try {
+    // Use the new fetcher to get stream configs
+    const activeStreams = await fetcher('/stream_configs?is_active=true');
+    if (Array.isArray(activeStreams) && activeStreams.length > 0) {
+      // Prioritize the primary stream
+      const primaryStream = activeStreams.find(s => s.is_primary);
+      return primaryStream || activeStreams[0];
+    }
+  } catch (error) {
+    console.error("Error fetching stream configuration:", error);
+  }
+  return null; // Return null if no config is found or if an error occurs
+};
+
+const getNowPlaying = async ({ queryKey }) => {
+    const [_key, streamId] = queryKey;
+    if (!streamId) return null;
+    try {
+        const data = await fetcher(`/now_playing?stream_id=${streamId}`);
+        if (data && data.song_title) {
+            if (data.cover_art_url && !data.cover_art_url.includes('?t=')) {
+                data.cover_art_url += `?t=${Date.now()}`;
+            }
+            return data;
+        }
+        // If API returns empty or invalid data, use fallback
+        throw new Error("No valid 'now playing' data received from API.");
+    } catch (error) {
+        console.warn("Could not fetch 'now playing' data, using fallback.", error);
+        return {
+            song_title: 'En Vivo',
+            artist: 'SELAIAH RADIO',
+            cover_art_url: `https://c34.radioboss.fm/w/artwork/888.jpg?t=${Date.now()}`,
+            stream_id: streamId,
+        };
+    }
+};
+// --- END: New Data Fetching Functions ---
 
 const AudioContext = createContext(null);
 
@@ -23,166 +84,78 @@ export const AudioProvider = ({ children }) => {
   const audioRef = useRef(null);
   const previousVolumeRef = useRef(70);
 
-  // Obtener configuración del stream
   const { data: streamConfig } = useQuery({
     queryKey: ['streamConfig'],
-    queryFn: async () => {
-      const configs = await base44.entities.StreamConfig.filter({ 
-        is_active: true, 
-        is_primary: true 
-      });
-      if (configs.length > 0) return configs[0];
-      
-      const allConfigs = await base44.entities.StreamConfig.filter({ is_active: true });
-      return allConfigs[0] || null;
-    },
-    refetchInterval: 60000,
-    initialData: null,
+    queryFn: fetchStreamConfig,
+    refetchInterval: 60000, // Refetch every minute
+    staleTime: 55000, // Consider data stale after 55 seconds
   });
 
-  // Obtener información de Now Playing - ARREGLADO
   const { data: nowPlaying } = useQuery({
     queryKey: ['nowPlaying', streamConfig?.id],
-    queryFn: async () => {
-      if (!streamConfig?.id) {
-        console.log('⚠️ No hay stream configurado');
-        return null;
-      }
-      
-      try {
-        console.log('🎵 Obteniendo Now Playing...');
-        
-        // Llamar a la función del backend
-        const response = await base44.functions.invoke('getNowPlaying');
-        
-        console.log('📡 Respuesta completa:', response);
-        console.log('📡 Response.data:', response.data);
-        
-        if (response.data?.success && response.data?.data) {
-          const npData = response.data.data;
-          
-          // Agregar timestamp SOLO UNA VEZ para forzar actualización de imagen
-          if (npData.cover_art_url && !npData.cover_art_url.includes('?t=')) {
-            npData.cover_art_url = `${npData.cover_art_url}?t=${Date.now()}`;
-          }
-          
-          console.log('✅ Now Playing procesado:', {
-            artist: npData.artist,
-            title: npData.song_title,
-            image: npData.cover_art_url,
-            source: npData.source
-          });
-          
-          return { 
-            ...npData, 
-            stream_id: streamConfig.id
-          };
-        }
-        
-        // Fallback a BD
-        console.log('📦 Buscando en BD...');
-        const tracks = await base44.entities.NowPlaying.filter(
-          { stream_id: streamConfig.id },
-          "-created_date",
-          1
-        );
-        
-        if (tracks && tracks.length > 0) {
-          console.log('✅ Encontrado en BD:', tracks[0]);
-          return tracks[0];
-        }
-        
-        // Default
-        console.log('⚠️ Usando datos por defecto');
-        return {
-          song_title: 'En Vivo',
-          artist: 'SELAIAH RADIO',
-          cover_art_url: `https://c34.radioboss.fm/w/artwork/888.jpg?t=${Date.now()}`,
-          stream_id: streamConfig.id
-        };
-        
-      } catch (error) {
-        console.error('❌ Error obteniendo Now Playing:', error);
-        return {
-          song_title: 'En Vivo',
-          artist: 'SELAIAH RADIO',
-          cover_art_url: `https://c34.radioboss.fm/w/artwork/888.jpg?t=${Date.now()}`,
-          stream_id: streamConfig.id
-        };
-      }
-    },
-    refetchInterval: 10000, // Actualizar cada 10 segundos
-    enabled: !!streamConfig,
-    initialData: null,
+    queryFn: getNowPlaying,
+    refetchInterval: 10000, // Refetch every 10 seconds
+    enabled: !!streamConfig, // Only run if streamConfig is available
   });
 
-  // Configurar volumen - MEJORADO con logs
   useEffect(() => {
     if (audioRef.current) {
       const newVolume = isMuted ? 0 : volume / 100;
       audioRef.current.volume = newVolume;
-      console.log('🔊 Volumen ajustado:', {
-        volume: volume,
-        isMuted: isMuted,
-        actualVolume: newVolume,
-        audioElement: !!audioRef.current
-      });
     }
   }, [volume, isMuted]);
 
-  // Configurar stream URL
   useEffect(() => {
     if (audioRef.current && streamConfig?.stream_url) {
-      const wasPlaying = isPlaying;
-      audioRef.current.src = streamConfig.stream_url;
-      audioRef.current.load();
-      
-      if (wasPlaying) {
-        setTimeout(() => {
-          audioRef.current?.play()
-            .then(() => setIsPlaying(true))
-            .catch((err) => console.error("Error al retomar reproducción:", err));
-        }, 100);
-      }
+        if (audioRef.current.src !== streamConfig.stream_url) {
+            console.log("Changing audio source to:", streamConfig.stream_url);
+            const wasPlaying = !audioRef.current.paused;
+            audioRef.current.src = streamConfig.stream_url;
+            audioRef.current.load();
+            
+            if (wasPlaying) {
+                setTimeout(() => {
+                    audioRef.current?.play()
+                        .then(() => setIsPlaying(true))
+                        .catch((err) => handlePlayError(err, "retrying play after stream change"));
+                }, 250);
+            }
+        }
     }
   }, [streamConfig?.stream_url]);
 
-  const handlePlayError = (err) => {
-    console.error("Error al reproducir:", err);
-    setError("No se pudo conectar al stream");
+  const handlePlayError = (err, context = "general play") => {
+    console.error(`Audio playback error (${context}):`, err);
+    setError("No se pudo conectar al stream.");
     setIsPlaying(false);
     setIsLoading(false);
-    toast.error("Error al conectar con el stream");
-    
-    if (streamConfig?.fallback_url && audioRef.current) {
-      setTimeout(() => {
-        audioRef.current.src = streamConfig.fallback_url;
-        audioRef.current.load();
-        setError(null);
-      }, 2000);
-    }
+    toast.error("Error al conectar con el stream.");
   };
 
   const togglePlay = async () => {
-    if (!audioRef.current || !streamConfig) {
-      toast.error("No hay stream configurado");
+    if (!audioRef.current || !streamConfig?.stream_url) {
+      toast.error("Stream de audio no disponible.");
       return;
     }
 
-    setIsLoading(true);
-
-    try {
-      if (isPlaying) {
-        audioRef.current.pause();
-        setIsPlaying(false);
-      } else {
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      setIsLoading(true);
+      try {
+        // Ensure the source is set before playing
+        if (audioRef.current.src !== streamConfig.stream_url) {
+            audioRef.current.src = streamConfig.stream_url;
+            audioRef.current.load();
+        }
         await audioRef.current.play();
         setIsPlaying(true);
+      } catch (err) {
+        handlePlayError(err, "togglePlay");
+      } finally {
+        setIsLoading(false);
       }
-    } catch (err) {
-      handlePlayError(err);
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -197,15 +170,12 @@ export const AudioProvider = ({ children }) => {
   };
 
   const handleVolumeChange = (newVolume) => {
-    console.log('🎚️ Cambiando volumen a:', newVolume);
     setVolume(newVolume);
     if (newVolume > 0 && isMuted) {
       setIsMuted(false);
-      console.log('🔊 Desmutear porque volumen > 0');
     }
-    if (newVolume === 0) {
+    if (newVolume === 0 && !isMuted) {
       setIsMuted(true);
-      console.log('🔇 Mutear porque volumen = 0');
     }
   };
 
@@ -227,23 +197,18 @@ export const AudioProvider = ({ children }) => {
   return (
     <AudioContext.Provider value={value}>
       {children}
-      {/* Audio Element Global - Solo uno en toda la app */}
       <audio 
         ref={audioRef} 
         preload="metadata"
-        onError={handlePlayError}
-        onCanPlay={() => {
-          setIsLoading(false);
-        }}
+        onError={(e) => handlePlayError(e, 'audio element onError')}
+        onCanPlay={() => setIsLoading(false)}
         onPlaying={() => {
+          setIsLoading(false);
           setIsPlaying(true);
           setError(null);
         }}
-        onPause={() => {
-          if (audioRef.current && !audioRef.current.ended) {
-            setIsPlaying(false);
-          }
-        }}
+        onPause={() => setIsPlaying(false)}
+        onStalled={() => setIsLoading(true)}
       />
     </AudioContext.Provider>
   );

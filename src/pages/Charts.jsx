@@ -1,24 +1,47 @@
 
 import React from "react";
-import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { TrendingUp, Music, ChevronUp, ChevronDown, Minus } from "lucide-react";
 import { motion } from "framer-motion";
+import { appParams } from "@/lib/app-params";
+
+// --- START: NEW API LOGIC ---
+const API_BASE_URL = "https://us-central1-selaiah-radio.cloudfunctions.net/api";
+const token = appParams.token;
+
+const fetcher = async (path, options = {}) => {
+    const url = `${API_BASE_URL}${path}`;
+    const headers = { 'Content-Type': 'application/json', ...options.headers };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, { ...options, headers });
+    if (!response.ok) {
+        if (response.status === 204) return []; // Return empty array for No Content
+        const errorText = await response.text();
+        console.error(`API Error on ${path}: ${errorText}`);
+        throw new Error(`Request failed: ${response.status}`);
+    }
+    return response.json();
+};
+
+const getCharts = () => fetcher('/charts?sort=-created_date&is_current=true&limit=1');
+// --- END: NEW API LOGIC ---
 
 export default function ChartsPage() {
   const { data: charts, isLoading } = useQuery({
     queryKey: ['charts'],
-    queryFn: () => base44.entities.Chart.list("-created_date"),
+    queryFn: getCharts,
     initialData: [],
   });
 
-  const currentChart = charts.find(c => c.is_current) || charts[0];
+  const currentChart = charts && charts.length > 0 ? charts[0] : null;
 
   const getPositionChange = (song) => {
-    if (!song.previous_position) return null;
+    if (song.previous_position === null || song.previous_position === undefined) return null;
     const change = song.previous_position - song.position;
     if (change > 0) return { type: "up", value: change };
     if (change < 0) return { type: "down", value: Math.abs(change) };
@@ -40,27 +63,6 @@ export default function ChartsPage() {
             Las alabanzas y canciones cristianas más populares de la semana
           </p>
         </motion.div>
-
-        {/* Chart Selector */}
-        {charts.length > 1 && (
-          <div className="max-w-2xl mx-auto mb-8">
-            <div className="flex gap-2 flex-wrap justify-center">
-              {charts.slice(0, 5).map(chart => (
-                <Link key={chart.id} to={createPageUrl(`ChartDetail?slug=${chart.slug}`)}>
-                  <Card className={`px-4 py-2 cursor-pointer transition-all ${
-                    chart.is_current 
-                      ? "bg-gradient-to-r from-pink-500 to-purple-600 border-transparent" 
-                      : "bg-white/5 border-white/10 hover:bg-white/10"
-                  }`}>
-                    <span className="text-white font-medium text-sm">
-                      {chart.title}
-                    </span>
-                  </Card>
-                </Link>
-              ))}
-            </div>
-          </div>
-        )}
 
         {isLoading ? (
           <div className="max-w-4xl mx-auto space-y-4">

@@ -1,62 +1,58 @@
+
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { MapPin, X, Navigation } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGeolocation } from "./LocationService";
 import { toast } from "sonner";
+import { appParams } from "@/lib/app-params"; // Import token provider
 
 export default function LocationPrompt() {
   const [showPrompt, setShowPrompt] = useState(false);
-  const { getLocation, saveLocation, loading, isSupported } = useGeolocation();
+  // The hook is already updated, we just need to use its new function
+  const { getLocation, saveLocation, loading, isSupported, hasPrimaryLocation } = useGeolocation();
 
   useEffect(() => {
-    // Solo ejecutar en el navegador
-    if (typeof window === 'undefined') return;
+    // Only run in the browser and if a user is logged in
+    if (typeof window === 'undefined' || !appParams.token) return;
 
     const checkLocationStatus = async () => {
       try {
-        // Verificar si ya se pidió ubicación
         const promptDismissed = localStorage.getItem('location-prompt-dismissed');
         if (promptDismissed) return;
 
-        // Verificar si ya tiene ubicación guardada
-        const user = await base44.auth.me().catch(() => null);
-        if (!user) return;
+        // Use the new function from the updated hook
+        const alreadyHasLocation = await hasPrimaryLocation();
 
-        const locations = await base44.entities.UserLocation.filter({
-          created_by: user.email,
-          is_primary: true
-        });
-
-        if (locations.length === 0 && isSupported) {
-          // Mostrar el prompt después de 3 segundos
-          setTimeout(() => {
+        if (!alreadyHasLocation && isSupported) {
+          // Show the prompt after a delay
+          const timer = setTimeout(() => {
             setShowPrompt(true);
-          }, 3000);
+          }, 5000); // Increased delay to be less intrusive
+          return () => clearTimeout(timer);
         }
       } catch (error) {
-        console.error("Error verificando estado de ubicación:", error);
+        console.error("Error checking location status:", error);
       }
     };
 
     checkLocationStatus();
-  }, [isSupported]);
+  }, [isSupported, hasPrimaryLocation]);
 
   const handleAllow = async () => {
     try {
       const locationData = await getLocation();
       if (locationData) {
         await saveLocation(locationData);
-        toast.success("¡Ubicación guardada! Ahora puedes ver noticias locales.");
+        toast.success("¡Ubicación guardada! Ahora verás contenido local.");
         setShowPrompt(false);
         if (typeof window !== 'undefined') {
           localStorage.setItem('location-prompt-dismissed', 'true');
         }
       }
     } catch (error) {
-      toast.error("No se pudo obtener tu ubicación. " + (error.message || ""));
+      toast.error(error.message || "No se pudo obtener tu ubicación.");
     }
   };
 
@@ -67,7 +63,7 @@ export default function LocationPrompt() {
     setShowPrompt(false);
   };
 
-  if (!isSupported) {
+  if (!isSupported || !showPrompt) {
     return null;
   }
 
@@ -89,25 +85,17 @@ export default function LocationPrompt() {
             </button>
 
             <div className="flex items-start gap-4 mb-4">
-              <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-                <MapPin className="w-6 h-6 text-white" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-xl font-bold text-white mb-2">
-                  Descubre tu Comunidad Cristiana
-                </h3>
-                <p className="text-white/90 text-sm">
-                  Permítenos conocer tu ubicación para mostrarte eventos, iglesias y noticias cristianas de tu área
-                </p>
-              </div>
-            </div>
-
-            <div className="mb-4 bg-white/10 rounded-lg p-3">
-              <p className="text-xs text-white/90">
-                ✨ Verás contenido relevante de tu ciudad<br/>
-                🙏 Conecta con iglesias y ministerios locales<br/>
-                📅 Conoce eventos cristianos cerca de ti
-              </p>
+                <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                    <MapPin className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                    <h3 className="text-xl font-bold text-white mb-2">
+                        Descubre contenido local
+                    </h3>
+                    <p className="text-white/90 text-sm">
+                        Permítenos usar tu ubicación para mostrarte eventos, iglesias y noticias cristianas en tu área.
+                    </p>
+                </div>
             </div>
 
             <div className="flex gap-2">
@@ -124,12 +112,12 @@ export default function LocationPrompt() {
                 variant="ghost"
                 className="text-white hover:bg-white/10"
               >
-                Después
+                Ahora no
               </Button>
             </div>
 
             <p className="text-xs text-white/70 mt-3 text-center">
-              Tu privacidad es importante. Solo usamos tu ubicación para mostrarte contenido local.
+              Tu privacidad es importante para nosotros.
             </p>
           </Card>
         </motion.div>

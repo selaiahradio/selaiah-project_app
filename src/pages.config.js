@@ -52,7 +52,68 @@ import AdminSupport from './pages/AdminSupport';
 import ReligionSetup from './pages/ReligionSetup';
 import SacredTextsMultiReligion from './pages/SacredTextsMultiReligion';
 import Layout from './Layout.jsx';
+import Login from './pages/Login';
 
+const pagePaths = {
+    "Home": "/",
+    "Shows": "/shows",
+    "RadioJockeys": "/djs",
+    "Contact": "/contact",
+    "Terms": "/terms",
+    "Privacy": "/privacy",
+    "Blog": "/blog",
+    "BlogPost": "/blog/post",
+    "Charts": "/charts",
+    "Events": "/events",
+    "StreamSettings": "/stream-settings",
+    "LocalNews": "/local-news",
+    "Admin": "/admin",
+    "AdminShows": "/admin/shows",
+    "AdminDJs": "/admin/djs",
+    "AdminBlog": "/admin/blog",
+    "AdminCategories": "/admin/categories",
+    "AdminPages": "/admin/pages",
+    "AdminCharts": "/admin/charts",
+    "AdminEvents": "/admin/events",
+    "AdminNotifications": "/admin/notifications",
+    "AdminSubscriptions": "/admin/subscriptions",
+    "AdminMessages": "/admin/messages",
+    "AdminLocalNews": "/admin/local-news",
+    "AdminLocations": "/admin/locations",
+    "LocalNewsDetail": "/local-news/detail",
+    "Bible": "/bible",
+    "AdminBible": "/admin/bible",
+    "Donations": "/donations",
+    "Shop": "/shop",
+    "Feed": "/feed",
+    "AdminShop": "/admin/shop",
+    "AdminOrders": "/admin/orders",
+    "AdminDonations": "/admin/donations",
+    "Profile": "/profile",
+    "Verification": "/verification",
+    "AdminSocial": "/admin/social",
+    "ShopAnalytics": "/admin/shop-analytics",
+    "AdminUsers": "/admin/users",
+    "AdminVerifications": "/admin/verifications",
+    "AdminDJVirtual": "/admin/dj-virtual",
+    "AdminIntegrations": "/admin/integrations",
+    "EmergencySuperadmin": "/emergency-superadmin",
+    "Documentation": "/documentation",
+    "MigrationGuide": "/migration-guide",
+    "AdminDiagnostics": "/admin/diagnostics",
+    "AdminSetup": "/admin/setup",
+    "AdminRoles": "/admin/roles",
+    "AdminSettings": "/admin/settings",
+    "AdminAppearance": "/admin/appearance",
+    "AdminSupport": "/admin/support",
+    "ReligionSetup": "/religion-setup",
+    "SacredTextsMultiReligion": "/sacred-texts",
+    "Login": "/login"
+}
+
+export function getPagePath(pageName) {
+    return pagePaths[pageName] || "/";
+}
 
 export const PAGES = {
     "Home": Home,
@@ -108,6 +169,7 @@ export const PAGES = {
     "AdminSupport": AdminSupport,
     "ReligionSetup": ReligionSetup,
     "SacredTextsMultiReligion": SacredTextsMultiReligion,
+    "Login": Login
 }
 
 export const pagesConfig = {

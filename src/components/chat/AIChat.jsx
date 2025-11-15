@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { base44 } from "@/api/base44Client";
-import { useMutation } from "@tanstack/react-query";
+import { useSocket } from "@/lib/SocketContext"; 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +28,9 @@ export default function AIChat({ departmentId = null, position = "right" }) {
     }
   ]);
   const [inputMessage, setInputMessage] = useState("");
+  const [isWaitingForResponse, setIsWaitingForResponse] = useState(false);
   const messagesEndRef = useRef(null);
+  const socket = useSocket();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -39,34 +40,37 @@ export default function AIChat({ departmentId = null, position = "right" }) {
     scrollToBottom();
   }, [messages]);
 
-  const chatMutation = useMutation({
-    mutationFn: async (message) => {
-      const response = await base44.functions.invoke('chatWithAIMultiReligion', {
-        message,
-        departmentId,
-        conversationHistory: messages.slice(-8) // Últimos 8 mensajes para mejor contexto
-      });
-      return response.data;
-    },
-    onSuccess: (data) => {
-      setMessages(prev => [...prev, {
-        role: "assistant",
-        content: data.message,
-        timestamp: new Date()
-      }]);
-    },
-    onError: () => {
-      toast.error("Error al enviar mensaje");
-      setMessages(prev => [...prev, {
-        role: "assistant",
-        content: "Lo siento, ocurrió un error. Por favor intenta de nuevo.",
-        timestamp: new Date()
-      }]);
-    }
-  });
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleChatMessage = (data) => {
+      setIsWaitingForResponse(false);
+      if (data.error) {
+        console.error("AI Chat Error:", data.error);
+        toast.error("Error en el chat de IA");
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: "Lo siento, ocurrió un error. Por favor intenta de nuevo.",
+          timestamp: new Date()
+        }]);
+      } else {
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: data.message,
+          timestamp: new Date()
+        }]);
+      }
+    };
+
+    socket.on('chat message', handleChatMessage);
+
+    return () => {
+      socket.off('chat message', handleChatMessage);
+    };
+  }, [socket]);
 
   const handleSend = () => {
-    if (!inputMessage.trim()) return;
+    if (!socket || !inputMessage.trim()) return;
 
     const userMessage = {
       role: "user",
@@ -75,8 +79,15 @@ export default function AIChat({ departmentId = null, position = "right" }) {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    setIsWaitingForResponse(true);
+    
+    socket.emit('chat message', {
+      message: inputMessage,
+      departmentId,
+      conversationHistory: messages.slice(-8) // Últimos 8 mensajes para mejor contexto
+    });
+
     setInputMessage("");
-    chatMutation.mutate(inputMessage);
   };
 
   const handleKeyPress = (e) => {
@@ -177,7 +188,7 @@ export default function AIChat({ departmentId = null, position = "right" }) {
                         </div>
                       </div>
                     ))}
-                    {chatMutation.isPending && (
+                    {isWaitingForResponse && (
                       <div className="flex justify-start">
                         <div className="bg-white/10 rounded-2xl px-4 py-2">
                           <div className="flex gap-1">
@@ -200,11 +211,11 @@ export default function AIChat({ departmentId = null, position = "right" }) {
                         onKeyPress={handleKeyPress}
                         placeholder={t.chat.placeholder}
                         className="bg-white/10 border-white/20 text-white"
-                        disabled={chatMutation.isPending}
+                        disabled={isWaitingForResponse}
                       />
                       <Button
                         onClick={handleSend}
-                        disabled={!inputMessage.trim() || chatMutation.isPending}
+                        disabled={!inputMessage.trim() || isWaitingForResponse}
                         className="bg-blue-600 hover:bg-blue-700"
                       >
                         <Send className="w-4 h-4" />

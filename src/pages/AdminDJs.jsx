@@ -1,6 +1,5 @@
 
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,51 +14,107 @@ import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 
+const API_BASE_URL = "https://us-central1-selaiah-radio.cloudfunctions.net/api";
+
+// --- START: New Data Fetching Functions ---
+
+const fetchDJs = async () => {
+  const response = await fetch(`${API_BASE_URL}/radio_jockeys?sort=-created_date`);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ message: response.statusText }));
+    throw new Error(`Error ${response.status}: ${errorData.message || 'Failed to fetch DJs'}`);
+  }
+  const data = await response.json();
+  return Array.isArray(data) ? data : [];
+};
+
+const createDJ = async (newDJ) => {
+  const response = await fetch(`${API_BASE_URL}/radio_jockeys`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(newDJ),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to create DJ');
+  }
+  return response.json();
+};
+
+const updateDJ = async ({ id, data }) => {
+  const response = await fetch(`${API_BASE_URL}/radio_jockeys/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to update DJ');
+  }
+  return response.json();
+};
+
+const deleteDJ = async (id) => {
+  const response = await fetch(`${API_BASE_URL}/radio_jockeys/${id}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to delete DJ');
+  }
+  // Return a success indicator, as delete might not return a body
+  return { success: true };
+};
+
+// --- END: New Data Fetching Functions ---
+
+
 export default function AdminDJsPage() {
   const [editingDJ, setEditingDJ] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const queryClient = useQueryClient();
 
-  const { data: djs, isLoading } = useQuery({
+  // MODIFIED: Using the new fetchDJs function
+  const { data: djs, isLoading, isError, error } = useQuery({
     queryKey: ['adminDJs'],
-    queryFn: () => base44.entities.RadioJockey.list("-created_date"),
+    queryFn: fetchDJs,
     initialData: [],
   });
+  
+  if (isError) {
+      console.error("Error fetching DJs:", error);
+      toast.error(`Error al cargar DJs: ${error.message}`);
+  }
 
+  // MODIFIED: Using the new createDJ function
   const createDJMutation = useMutation({
-    mutationFn: (data) => base44.entities.RadioJockey.create(data),
+    mutationFn: createDJ,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminDJs'] });
-      queryClient.invalidateQueries({ queryKey: ['radioJockeys'] });
-      queryClient.invalidateQueries({ queryKey: ['featuredDJ'] });
       toast.success("DJ creado exitosamente");
       setShowForm(false);
       setEditingDJ(null);
     },
-    onError: () => toast.error("Error al crear el DJ"),
+    onError: (err) => toast.error(`Error al crear el DJ: ${err.message}`),
   });
 
+  // MODIFIED: Using the new updateDJ function
   const updateDJMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.RadioJockey.update(id, data),
+    mutationFn: updateDJ,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminDJs'] });
-      queryClient.invalidateQueries({ queryKey: ['radioJockeys'] });
-      queryClient.invalidateQueries({ queryKey: ['featuredDJ'] });
       toast.success("DJ actualizado exitosamente");
       setShowForm(false);
       setEditingDJ(null);
     },
-    onError: () => toast.error("Error al actualizar el DJ"),
+    onError: (err) => toast.error(`Error al actualizar el DJ: ${err.message}`),
   });
 
+  // MODIFIED: Using the new deleteDJ function
   const deleteDJMutation = useMutation({
-    mutationFn: (id) => base44.entities.RadioJockey.delete(id),
+    mutationFn: deleteDJ,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminDJs'] });
-      queryClient.invalidateQueries({ queryKey: ['radioJockeys'] });
-      queryClient.invalidateQueries({ queryKey: ['featuredDJ'] });
       toast.success("DJ eliminado");
     },
+    onError: (err) => toast.error(`Error al eliminar el DJ: ${err.message}`),
   });
 
   const handleSubmit = (e) => {
@@ -95,7 +150,7 @@ export default function AdminDJsPage() {
   };
 
   const handleDelete = (id) => {
-    if (confirm("¿Estás seguro de eliminar este DJ?")) {
+    if (window.confirm("¿Estás seguro de eliminar este DJ?")) {
       deleteDJMutation.mutate(id);
     }
   };
@@ -137,7 +192,6 @@ export default function AdminDJsPage() {
           </div>
         </motion.div>
 
-        {/* Form */}
         {showForm && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -309,13 +363,12 @@ export default function AdminDJsPage() {
           </motion.div>
         )}
 
-        {/* DJs List */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {isLoading ? (
             [...Array(3)].map((_, i) => (
               <div key={i} className="h-96 bg-white/5 rounded-lg animate-pulse" />
             ))
-          ) : djs.length > 0 ? (
+          ) : djs && djs.length > 0 ? (
             djs.map((dj) => (
               <Card key={dj.id} className="bg-white/5 border-white/10 overflow-hidden">
                 <div className="aspect-square relative overflow-hidden bg-gradient-to-br from-pink-500/20 to-purple-600/20">

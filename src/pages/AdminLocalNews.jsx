@@ -1,5 +1,5 @@
+
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,33 @@ import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { format } from "date-fns";
+import { appParams } from "@/lib/app-params";
+
+// --- START: NEW API LOGIC ---
+const API_BASE_URL = "https://us-central1-selaiah-radio.cloudfunctions.net/api";
+const token = appParams.token;
+
+const fetcher = async (path, options = {}) => {
+    const url = `${API_BASE_URL}${path}`;
+    const headers = { 'Content-Type': 'application/json', ...options.headers };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, { ...options, headers });
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`API Error on ${path}: ${errorText}`);
+        throw new Error(`Request failed: ${response.status}`);
+    }
+    if (response.status === 204) return null;
+    return response.json();
+};
+
+const getLocalNews = () => fetcher('/local_news?sort=-published_date');
+const createLocalNew = (data) => fetcher('/local_news', { method: 'POST', body: JSON.stringify(data) });
+const updateLocalNew = ({ id, data }) => fetcher(`/local_news/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+const deleteLocalNew = (id) => fetcher(`/local_news/${id}`, { method: 'DELETE' });
+// --- END: NEW API LOGIC ---
 
 export default function AdminLocalNewsPage() {
   const [editingNews, setEditingNews] = useState(null);
@@ -22,12 +49,12 @@ export default function AdminLocalNewsPage() {
 
   const { data: news, isLoading } = useQuery({
     queryKey: ['adminLocalNews'],
-    queryFn: () => base44.entities.LocalNews.list("-published_date"),
+    queryFn: getLocalNews,
     initialData: [],
   });
 
   const createNewsMutation = useMutation({
-    mutationFn: (data) => base44.entities.LocalNews.create(data),
+    mutationFn: createLocalNew,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminLocalNews'] });
       queryClient.invalidateQueries({ queryKey: ['localNews'] });
@@ -39,7 +66,7 @@ export default function AdminLocalNewsPage() {
   });
 
   const updateNewsMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.LocalNews.update(id, data),
+    mutationFn: updateLocalNew,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminLocalNews'] });
       queryClient.invalidateQueries({ queryKey: ['localNews'] });
@@ -51,7 +78,7 @@ export default function AdminLocalNewsPage() {
   });
 
   const deleteNewsMutation = useMutation({
-    mutationFn: (id) => base44.entities.LocalNews.delete(id),
+    mutationFn: deleteLocalNew,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminLocalNews'] });
       queryClient.invalidateQueries({ queryKey: ['localNews'] });
@@ -142,7 +169,6 @@ export default function AdminLocalNewsPage() {
           </div>
         </motion.div>
 
-        {/* Search */}
         <Card className="bg-white/5 border-white/10 p-4 mb-6">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
@@ -155,7 +181,6 @@ export default function AdminLocalNewsPage() {
           </div>
         </Card>
 
-        {/* Form */}
         {showForm && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -366,7 +391,6 @@ export default function AdminLocalNewsPage() {
           </motion.div>
         )}
 
-        {/* News List */}
         <div className="space-y-4">
           {isLoading ? (
             [...Array(3)].map((_, i) => (

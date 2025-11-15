@@ -1,16 +1,43 @@
+
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { TrendingUp, Plus, Trash2, Save, ArrowLeft, Music } from "lucide-react";
+import { TrendingUp, Plus, Trash2, Save, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
+import { appParams } from "@/lib/app-params";
+
+// --- START: NEW API LOGIC ---
+const API_BASE_URL = "https://us-central1-selaiah-radio.cloudfunctions.net/api";
+const token = appParams.token;
+
+const fetcher = async (path, options = {}) => {
+    const url = `${API_BASE_URL}${path}`;
+    const headers = { 'Content-Type': 'application/json', ...options.headers };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, { ...options, headers });
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`API Error on ${path}: ${errorText}`);
+        throw new Error(`Request failed: ${response.status}`);
+    }
+    if (response.status === 204) return null;
+    return response.json();
+};
+
+const getCharts = () => fetcher('/charts?sort=-created_date');
+const createChart = (data) => fetcher('/charts', { method: 'POST', body: JSON.stringify(data) });
+const updateChart = ({ id, data }) => fetcher(`/charts/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+const deleteChart = (id) => fetcher(`/charts/${id}`, { method: 'DELETE' });
+// --- END: NEW API LOGIC ---
 
 export default function AdminChartsPage() {
   const [editingChart, setEditingChart] = useState(null);
@@ -20,12 +47,12 @@ export default function AdminChartsPage() {
 
   const { data: charts, isLoading } = useQuery({
     queryKey: ['adminCharts'],
-    queryFn: () => base44.entities.Chart.list("-created_date"),
+    queryFn: getCharts,
     initialData: [],
   });
 
   const createChartMutation = useMutation({
-    mutationFn: (data) => base44.entities.Chart.create(data),
+    mutationFn: createChart,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminCharts'] });
       queryClient.invalidateQueries({ queryKey: ['charts'] });
@@ -38,7 +65,7 @@ export default function AdminChartsPage() {
   });
 
   const updateChartMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Chart.update(id, data),
+    mutationFn: updateChart,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminCharts'] });
       queryClient.invalidateQueries({ queryKey: ['charts'] });
@@ -51,7 +78,7 @@ export default function AdminChartsPage() {
   });
 
   const deleteChartMutation = useMutation({
-    mutationFn: (id) => base44.entities.Chart.delete(id),
+    mutationFn: deleteChart,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminCharts'] });
       queryClient.invalidateQueries({ queryKey: ['charts'] });
@@ -143,7 +170,6 @@ export default function AdminChartsPage() {
           </div>
         </motion.div>
 
-        {/* Form */}
         {showForm && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -217,7 +243,6 @@ export default function AdminChartsPage() {
                   </div>
                 </div>
 
-                {/* Songs Section */}
                 <div className="border-t border-white/10 pt-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-semibold text-white">Canciones</h3>
@@ -323,7 +348,6 @@ export default function AdminChartsPage() {
           </motion.div>
         )}
 
-        {/* Charts List */}
         <div className="space-y-4">
           {isLoading ? (
             [...Array(3)].map((_, i) => (

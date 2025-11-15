@@ -1,6 +1,5 @@
 
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,14 +8,41 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Calendar, Plus, Trash2, Save, X, ArrowLeft } from "lucide-react";
+import { Calendar, Plus, Trash2, Save, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
+import { appParams } from "@/lib/app-params";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const DAYS_ES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+
+// --- START: NEW API LOGIC ---
+const API_BASE_URL = "https://us-central1-selaiah-radio.cloudfunctions.net/api";
+const token = appParams.token;
+
+const fetcher = async (path, options = {}) => {
+    const url = `${API_BASE_URL}${path}`;
+    const headers = { 'Content-Type': 'application/json', ...options.headers };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, { ...options, headers });
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`API Error on ${path}: ${errorText}`);
+        throw new Error(`Request failed: ${response.status}`);
+    }
+    if (response.status === 204) return null;
+    return response.json();
+};
+
+const getShows = () => fetcher('/shows?sort=-created_date');
+const createShow = (data) => fetcher('/shows', { method: 'POST', body: JSON.stringify(data) });
+const updateShow = ({ id, data }) => fetcher(`/shows/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+const deleteShow = (id) => fetcher(`/shows/${id}`, { method: 'DELETE' });
+// --- END: NEW API LOGIC ---
 
 export default function AdminShowsPage() {
   const [editingShow, setEditingShow] = useState(null);
@@ -25,12 +51,12 @@ export default function AdminShowsPage() {
 
   const { data: shows, isLoading } = useQuery({
     queryKey: ['adminShows'],
-    queryFn: () => base44.entities.RadioShow.list("-created_date"),
+    queryFn: getShows,
     initialData: [],
   });
 
   const createShowMutation = useMutation({
-    mutationFn: (data) => base44.entities.RadioShow.create(data),
+    mutationFn: createShow,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminShows'] });
       queryClient.invalidateQueries({ queryKey: ['shows'] });
@@ -43,7 +69,7 @@ export default function AdminShowsPage() {
   });
 
   const updateShowMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.RadioShow.update(id, data),
+    mutationFn: updateShow,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminShows'] });
       queryClient.invalidateQueries({ queryKey: ['shows'] });
@@ -56,7 +82,7 @@ export default function AdminShowsPage() {
   });
 
   const deleteShowMutation = useMutation({
-    mutationFn: (id) => base44.entities.RadioShow.delete(id),
+    mutationFn: deleteShow,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminShows'] });
       queryClient.invalidateQueries({ queryKey: ['shows'] });
@@ -137,7 +163,6 @@ export default function AdminShowsPage() {
           </div>
         </motion.div>
 
-        {/* Form */}
         {showForm && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -297,7 +322,6 @@ export default function AdminShowsPage() {
           </motion.div>
         )}
 
-        {/* Shows List */}
         <div className="space-y-4">
           {isLoading ? (
             [...Array(3)].map((_, i) => (
