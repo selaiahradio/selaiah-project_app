@@ -1,98 +1,26 @@
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Outlet, useLocation, useNavigate, Link } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { useAuth, Me } from "@/lib/AuthContext";
-import { QueryClientProvider, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/lib/AuthContext";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClientInstance as queryClient } from "@/lib/query-client.js";
 import { AudioProvider, useAudio } from "@/components/player/AudioContext";
-import { Toaster, toast } from "sonner";
 import { LanguageProvider, useLanguage } from "@/components/LanguageContext";
-import { appParams } from "@/lib/app-params";
 import { AnimatePresence, motion } from "framer-motion";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { getPagePath } from "@/pages.config.js";
 
 import { Home, ListMusic, Mic, Star, Radio, MessageSquare, ShoppingCart, CircleUserRound, LogIn, LogOut, Ticket, Settings, Shield, BookOpen, Newspaper, Users, Landmark, Contact, Info, HandHelping, Tv, Menu, X, Sun, Moon, Bell, Search, LayoutDashboard } from "lucide-react";
 
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "./components/ui/button";
 
 // Player
-import { Link } from "react-router-dom";
-
 import NotificationPrompt from "./components/notifications/NotificationPrompt";
 import LocationPrompt from "./components/location/LocationPrompt";
 
 // Chat
 import AIChat from "@/components/chat/AIChat";
 import UserChat from "@/components/chat/UserChat";
-import { SocketProvider } from "./lib/SocketContext";
-
-// Translations
-
-
-
-
-function NavigationLogger() {
-  const location = useLocation();
-  const { isAuthenticated } = useAuth();
-
-  useEffect(() => {
-    // This tells the parent window that the URL has changed
-    window.parent?.postMessage({ type: "app_changed_url", url: window.location.href }, "*");
-  }, [location]);
-
-  useEffect(() => {
-    const path = location.pathname;
-    let pageName;
-
-    if (path === "/" || path === "") {
-      pageName = mainPage;
-    } else {
-      const page = path.replace(/^\//, "").split("/")[0];
-      pageName = Object.keys(pagePaths).find((p) => p.toLowerCase() === page.toLowerCase()) || null;
-    }
-    
-    if(isAuthenticated && pageName) {
-      window.base44.appLogs.logUserInApp(pageName).catch(() => {});
-    }
-
-  }, [location, isAuthenticated]);
-
-  return null;
-}
-
-
-const mainPage = "Home"
-
-
-
-
-// App-wide error handling
-
-
-const sendErrorToParent = (error) => {
-  const { title, details, componentName, originalError } = error;
-  // Don't report 402 errors, which are expected when the user is not a subscriber
-  if (originalError?.response?.status !== 402) {
-    window.parent?.postMessage({ type: "app_error", error: { title: title.toString(), details: details?.toString(), componentName: componentName?.toString() } }, "*");
-  }
-};
-
-const rejectionHandler = (event) => {
-  const componentName = event.reason.stack.match(/at\s+(\w+)\s+\(eval\)/)?.[1];
-  const title = componentName ? `Error in ${componentName}: ${event.reason.toString()}`: event.reason.toString();
-  sendErrorToParent({ title, details: event.reason.toString(), componentName, originalError: event.reason });
-};
-
-const errorHandler = (event) => {
-  let componentName = event.error?.stack.match(/at\s+(\w+)\s+\(eval\)/)?.[1];
-  if (componentName === 'eval') {
-    componentName = null;
-  }
-  const title = componentName ? `in ${componentName}: ${event.error.toString()}`: event.error.toString();
-  sendErrorToParent({ title, details: event.error.toString(), componentName, originalError: event.error });
-};
-
 
 function LivePlayer() {
   const location = useLocation();
@@ -169,59 +97,17 @@ function LivePlayer() {
   );
 }
 
-const LOGIN_URL = 'https://login.selaiah.com/'
-
-function Layout({ children, currentPageName }) {
+function Layout({ children }) {
   const location = useLocation();
   const { t, isRTL } = useLanguage();
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [user, setUser] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isDarkMode, setDarkMode] = useState(false);
-  const [isNotificationsMenuOpen, setNotificationsMenuOpen] = useState(false);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    (async () => {
-      if (!appParams.token) {
-        // No token, do nothing
-      } else {
-        try {
-          const me = await Me();
-          setUser(me);
-          setDarkMode(me?.preferences?.dark_mode || false);
-        } catch (e) {
-          console.error("Failed to fetch user, token might be invalid.", e);
-          // remove token and reload
-          localStorage.removeItem('base44_access_token');
-          window.location.reload();
-        }
-      }
-      setIsLoading(false);
-    })();
-  }, []);
-
-  const { data: notifications = [] } = useQuery({ 
-    queryKey: ['userNotifications'], 
-    queryFn: () => window.base44.entities.PushNotification.filter({status: 'sent'}, '-sent_at', 10), 
-    enabled: !!user,
-    refetchInterval: 60 * 1000, // Refetch every minute
-  });
-
-  const updateUserPreferences = useMutation({ 
-    mutationFn: (prefs) => Me.update(prefs), 
-    onError: (e) => console.error("Failed to update user preferences", e) 
-  });
+  const { user, logout, isLoading } = useAuth();
+  const [isDarkMode, setDarkMode] = useState(false); // Simplified dark mode
 
   const toggleDarkMode = () => {
-    const newMode = !isDarkMode;
-    setDarkMode(newMode);
-    if (user) {
-      updateUserPreferences.mutate({ preferences: { ...user.preferences, dark_mode: newMode }});
-    }
+    setDarkMode(prev => !prev);
+    // In a real app, you'd persist this preference.
   }
-
-  const unreadNotificationsCount = notifications.length; // This can be improved with a proper count
 
   // Navigation items
   const navItems = [
@@ -238,15 +124,6 @@ function Layout({ children, currentPageName }) {
     { name: t.nav.donate, path: getPagePath("Donations"), icon: HandHelping },
     { name: t.nav.contact, path: getPagePath("Contact"), icon: Contact },
   ].filter(item => !item.requireAuth || !!user);
-
-  function login() {
-    window.location.href = LOGIN_URL;
-  }
-
-  function logout() {
-    localStorage.removeItem("base44_access_token");
-    window.location.reload();
-  }
   
   return (
     <AudioProvider>
@@ -286,32 +163,8 @@ function Layout({ children, currentPageName }) {
                     {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
                   </Button>
 
-                  {user && (
-                    <DropdownMenu open={isNotificationsMenuOpen} onOpenChange={setNotificationsMenuOpen}>
-                       <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="relative text-gray-300 hover:text-white">
-                            <Bell className="w-5 h-5" />
-                            {unreadNotificationsCount > 0 && <span className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 bg-red-500 text-white text-xs rounded-full">{unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}</span>}
-                          </Button>
-                       </DropdownMenuTrigger>
-                       <DropdownMenuContent align="end" className="w-80 bg-slate-900 border-white/10">
-                          <DropdownMenuLabel className="text-white">{t.nav.notifications || 'Notificaciones'}</DropdownMenuLabel>
-                          <DropdownMenuSeparator className="bg-white/10" />
-                          {notifications.length > 0 ? (
-                            <div className="max-h-96 overflow-y-auto">
-                              {notifications.map(n => (
-                                <DropdownMenuItem key={n.id} className="flex flex-col items-start p-4 cursor-pointer hover:bg-white/5">
-                                  <p className="font-semibold text-white text-sm">{n.title}</p>
-                                  <p className="text-gray-400 text-xs mt-1">{n.body}</p>
-                                </DropdownMenuItem>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="p-4 text-center text-gray-400 text-sm">No hay notificaciones</div>
-                          )}
-                       </DropdownMenuContent>
-                    </DropdownMenu>
-                  )}
+                  {/* Notifications button (feature removed for now) */}
+                  {/* {user && ( ... )} */}
 
                   {isLoading ? (
                      <div className="w-24 h-8 bg-white/10 rounded-lg animate-pulse" />
@@ -331,8 +184,8 @@ function Layout({ children, currentPageName }) {
                       </DropdownMenuContent>
                     </DropdownMenu>
                   ) : (
-                    <Button onClick={login} className="bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 text-white">
-                      {t.nav.login}
+                    <Button asChild className="bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 text-white">
+                      <Link to={getPagePath("Login")}>{t.nav.login}</Link>
                     </Button>
                   )}
 
